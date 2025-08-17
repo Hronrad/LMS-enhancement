@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         LMS视频超简播放
 // @namespace    http://tampermonkey.net/
-// @version      8.0
-// @description  超简LMS视频播放 - 鲁棒虚拟多开版
+// @version      0.09
+// @description  超简LMS视频播放 
 // @author       You
 // @match        https://lms.nju.edu.cn/*
 // @grant        none
@@ -79,19 +79,51 @@
     
     // 创建虚拟播放会话 - 使用fetch避免触发XMLHttpRequest拦截
     function createVirtualSessions(url, originalData) {
-        const sessionCount = 5; // 创建5个虚拟会话
+        const sessionCount = 10; 
+        const maxDuration = 30; // 最大持续时间限制，避免服务器拒绝
+        
+        // 计算原始数据的持续时间
+        const originalDuration = (originalData.end || 0) - (originalData.start || 0);
+        const isLargeDuration = originalDuration > maxDuration;
         
         for (let i = 1; i < sessionCount; i++) {
             setTimeout(() => {
                 // 修改会话数据，模拟不同的播放会话
                 const virtualData = JSON.parse(JSON.stringify(originalData));
                 
-                // 添加微小的随机偏移
-                if (virtualData.start !== undefined) {
-                    virtualData.start += Math.floor(Math.random() * 3);
+                if (isLargeDuration) {
+                    // 如果原始持续时间过长，创建多个小片段
+                    const segmentDuration = Math.min(maxDuration, Math.floor(originalDuration / sessionCount) + 5);
+                    const baseStart = originalData.start || 0;
+                    
+                    // 为每个虚拟会话分配不同的时间段
+                    virtualData.start = baseStart + (i - 1) * segmentDuration + Math.floor(Math.random() * 3);
+                    virtualData.end = virtualData.start + segmentDuration + Math.floor(Math.random() * 3);
+                    
+                    // 确保不超过原始结束时间
+                    if (virtualData.end > originalData.end) {
+                        virtualData.end = originalData.end;
+                    }
+                    
+                    // 确保start不超过end
+                    if (virtualData.start >= virtualData.end) {
+                        virtualData.start = virtualData.end - Math.min(5, segmentDuration);
+                    }
+                } else {
+                    // 原始持续时间合理，只添加微小偏移
+                    if (virtualData.start !== undefined) {
+                        virtualData.start += Math.floor(Math.random() * 3);
+                    }
+                    if (virtualData.end !== undefined) {
+                        virtualData.end += Math.floor(Math.random() * 3);
+                    }
                 }
-                if (virtualData.end !== undefined) {
-                    virtualData.end += Math.floor(Math.random() * 3);
+                
+                // 验证数据有效性
+                const duration = (virtualData.end || 0) - (virtualData.start || 0);
+                if (duration <= 0 || duration > maxDuration * 2) {
+                    console.log(`跳过虚拟会话${i}，持续时间异常:`, duration);
+                    return;
                 }
                 
                 // 使用fetch发送虚拟请求，避免触发我们的拦截器
@@ -104,14 +136,18 @@
                     body: JSON.stringify(virtualData),
                     credentials: 'same-origin'
                 }).then(response => {
-                    console.log(`虚拟会话${i}响应:`, response.status);
+                    if (response.ok) {
+                        console.log(`虚拟会话${i}响应: ${response.status}`);
+                    } else {
+                        console.log(`虚拟会话${i}失败: ${response.status} (duration: ${duration})`);
+                    }
                 }).catch(error => {
-                    console.log(`虚拟会话${i}失败:`, error.message);
+                    console.log(`虚拟会话${i}错误:`, error.message);
                 });
                 
-                console.log(`发送虚拟会话${i}:`, virtualData);
+                console.log(`发送虚拟会话${i} (duration: ${duration}):`, virtualData);
                 
-            }, i * 300 + Math.random() * 200); // 随机延迟分散请求
+            }, i * 400 + Math.random() * 300); // 增加延迟分散请求
         }
     }
     
@@ -190,6 +226,6 @@
         setTimeout(keepVideoPlaying, 1000);
     }
     
-    console.log('LMS视频超简播放脚本启动 v8.0 - 鲁棒虚拟多开版');
+    console.log('LMS视频超简播放脚本启动 v9.0 - 智能时间段分割版');
     
 })();
