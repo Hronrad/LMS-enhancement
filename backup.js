@@ -1,9 +1,10 @@
 // ==UserScript==
-// @name         LMS视频超简播放
+// @name         南大LMS智慧教育平台增强
 // @namespace    http://tampermonkey.net/
 // @version      0.15
 // @description  超简LMS视频播放 + 自动下一个 + 智能停止 + 无视频自动跳转
 // @author       Hronrad
+// @license    GPL-3.0-only
 // @match        https://lms.nju.edu.cn/*
 // @grant        none
 // ==/UserScript==

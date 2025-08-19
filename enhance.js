@@ -1,10 +1,13 @@
 // ==UserScript==
-// @name         LMS视频超简播放
+// @name         南大LMS智慧教育平台|MOOC增强
 // @namespace    http://tampermonkey.net/
-// @version      0.17
+// @version      0.18
 // @description  超简LMS视频播放 + 自动下一个 + 智能停止 + 无视频自动跳转 + 视频倍速控制 + 解除播放限制
 // @author       Hronrad
+// @license    GPL-3.0-only
 // @match        https://lms.nju.edu.cn/*
+// @match        https://www.icourse163.org/*
+// @match        https://icourse163.org/*
 // @grant        none
 // ==/UserScript==
 
@@ -21,6 +24,9 @@
     const MAX_NO_VIDEO_CHECKS = 3;
     let currentSpeed = 1;
     let processedVideos = new Set(); // 防止重复处理视频
+    
+    // 检测当前网站
+    const isICourse163 = location.hostname.includes('icourse163.org');
 
     // 简化：解除视频播放限制
     function removeVideoRestrictions() {
@@ -138,6 +144,37 @@
         document.querySelectorAll('video').forEach(video => video.playbackRate = speed);
         console.log(`设置播放速度: ${speed}x`);
     }
+    
+    // icourse163 专用：简化初始化
+    function initICourse163() {
+        removeVideoRestrictions();
+        removePageRestrictions();
+        monitorRestrictions();
+        createSpeedControlUI();
+        
+        // 简单的视频速度应用
+        setInterval(() => {
+            document.querySelectorAll('video').forEach(video => {
+                if (video.playbackRate !== currentSpeed) {
+                    video.playbackRate = currentSpeed;
+                }
+            });
+        }, 2000);
+        
+        console.log('✅ icourse163 增强功能已启用：解除限制 + 倍速控制');
+    }
+    
+    // 如果是 icourse163 网站，只运行简化功能
+    if (isICourse163) {
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', () => setTimeout(initICourse163, 500));
+        } else {
+            setTimeout(initICourse163, 500);
+        }
+        return;
+    }
+    
+    // 以下是原有的南大LMS完整功能代码...
     
     // 重写页面可见性API
     Object.defineProperty(document, 'hidden', { get: () => false, configurable: true });
@@ -562,6 +599,6 @@
         setTimeout(checkNoVideoAutoNext, 3000);
     }
     
-    console.log('LMS视频超简播放脚本启动 v0.17 - 极简版');
+    console.log('LMS视频超简播放脚本启动 v0.18 - 极简版');
     
 })();

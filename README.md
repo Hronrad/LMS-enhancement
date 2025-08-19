@@ -8,7 +8,7 @@
 ### 安装方式：一键安装
 点击下面的按钮直接安装最新版本：
 
-[![Install Script](https://img.shields.io/badge/Install-UserScript-green?style=for-the-badge&logo=tampermonkey)](https://github.com/Hronrad/LMS-enhancement/raw/main/enhance.js)
+[![Install Script](https://img.shields.io/badge/Install-UserScript-green?style=for-the-badge&logo=tampermonkey)](https://greasyfork.org/zh-CN/scripts/546406-%E5%8D%97%E5%A4%A7lms%E6%99%BA%E6%85%A7%E6%95%99%E8%82%B2%E5%B9%B3%E5%8F%B0-mooc%E5%A2%9E%E5%BC%BA/)
 
 
 ## 🔄 自动更新
