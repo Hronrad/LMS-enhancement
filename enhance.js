@@ -28,6 +28,7 @@
     // 检测当前网站
     const isICourse163 = location.hostname.includes('icourse163.org');
 
+
     // 简化：解除视频播放限制
     function removeVideoRestrictions() {
         const videos = document.querySelectorAll('video:not([data-restrictions-removed])');
