@@ -1,9 +1,9 @@
 // ==UserScript==
 // @name         LMS视频超简播放
 // @namespace    http://tampermonkey.net/
-// @version      0.13
-// @description  超简LMS视频播放 + 自动下一个
-// @author       You
+// @version      0.15
+// @description  超简LMS视频播放 + 自动下一个 + 智能停止 + 无视频自动跳转
+// @author       Hronrad
 // @match        https://lms.nju.edu.cn/*
 // @grant        none
 // ==/UserScript==
@@ -15,6 +15,66 @@
     let lastUserAction = 0;
     let processedRequests = new Set(); // 防止重复处理
     let isVirtualRequest = false; // 标记虚拟请求
+    let allVideosCompleted = false; // 标记所有视频是否播放完成
+    let scriptPaused = false; // 标记脚本是否已暂停
+    let noVideoCheckCount = 0; // 无视频检查计数器
+    const MAX_NO_VIDEO_CHECKS = 3; // 最大无视频检查次数
+    let currentSpeed = 1; // 当前播放速度
+    
+    // 创建速度控制UI
+   function createSpeedControlUI() {
+    const speedButton = document.createElement('button');
+    speedButton.innerHTML = `${currentSpeed}x`;
+    speedButton.style.cssText = `position:fixed;top:20px;right:20px;width:60px;height:35px;background:#007bff;color:white;border:none;border-radius:8px;font-size:14px;cursor:pointer;z-index:10000;box-shadow:0 4px 12px rgba(0,123,255,0.3);transition:all 0.3s ease`;
+    
+    const speedMenu = document.createElement('div');
+    speedMenu.style.cssText = `position:fixed;top:60px;right:20px;background:white;border:1px solid #ddd;border-radius:12px;box-shadow:0 8px 24px rgba(0,0,0,0.15);z-index:10001;display:none;min-width:120px;overflow:hidden`;
+    
+    [0.1, 1, 3, 16].forEach(speed => {
+        const item = document.createElement('div');
+        item.textContent = `${speed}x`;
+        item.style.cssText = `padding:12px 16px;cursor:pointer;transition:background 0.2s ease;${speed === currentSpeed ? 'background:#e3f2fd;font-weight:bold' : ''}`;
+        item.onmouseenter = () => item.style.background = speed === currentSpeed ? '#bbdefb' : '#f5f5f5';
+        item.onmouseleave = () => item.style.background = speed === currentSpeed ? '#e3f2fd' : 'white';
+        item.onclick = () => {
+            setVideoSpeed(speed);
+            speedButton.innerHTML = `${speed}x`;
+            speedMenu.style.display = 'none';
+            // 更新菜单项高亮
+            speedMenu.querySelectorAll('div').forEach((div, i) => {
+                const itemSpeed = [0.1, 1, 3, 16][i];
+                div.style.background = itemSpeed === speed ? '#e3f2fd' : 'white';
+                div.style.fontWeight = itemSpeed === speed ? 'bold' : 'normal';
+            });
+        };
+        speedMenu.appendChild(item);
+    });
+    
+    // 按钮悬停效果
+    speedButton.onmouseenter = () => {
+        speedButton.style.background = '#0056b3';
+        speedButton.style.transform = 'translateY(-2px)';
+        speedButton.style.boxShadow = '0 6px 16px rgba(0,123,255,0.4)';
+    };
+    speedButton.onmouseleave = () => {
+        speedButton.style.background = '#007bff';
+        speedButton.style.transform = 'translateY(0)';
+        speedButton.style.boxShadow = '0 4px 12px rgba(0,123,255,0.3)';
+    };
+    
+    speedButton.onclick = () => speedMenu.style.display = speedMenu.style.display === 'none' ? 'block' : 'none';
+    document.onclick = (e) => { if (!speedMenu.contains(e.target) && e.target !== speedButton) speedMenu.style.display = 'none'; };
+    
+    document.body.appendChild(speedButton);
+    document.body.appendChild(speedMenu);
+}
+    
+    // 设置视频播放速度
+    function setVideoSpeed(speed) {
+        currentSpeed = speed;
+        document.querySelectorAll('video').forEach(video => video.playbackRate = speed);
+        console.log(`设置播放速度: ${speed}x`);
+    }
     
     // 重写页面可见性API
     Object.defineProperty(document, 'hidden', { 
@@ -44,6 +104,11 @@
     const originalSend = XMLHttpRequest.prototype.send;
     XMLHttpRequest.prototype.send = function(data) {
         const url = this._url || '';
+        
+        // 如果脚本已暂停，不处理新的请求
+        if (scriptPaused) {
+            return originalSend.call(this, data);
+        }
         
         // 只处理真实请求，避免虚拟请求触发递归
         if (!this._isVirtual && 
@@ -79,6 +144,11 @@
     
     // 创建虚拟播放会话 - 使用fetch避免触发XMLHttpRequest拦截
     function createVirtualSessions(url, originalData) {
+        // 如果脚本已暂停，不创建虚拟会话
+        if (scriptPaused) {
+            return;
+        }
+        
         const sessionCount = 10; 
         const maxDuration = 30; // 最大持续时间限制，避免服务器拒绝
         
@@ -88,6 +158,11 @@
         
         for (let i = 1; i < sessionCount; i++) {
             setTimeout(() => {
+                // 如果脚本已暂停，停止创建会话
+                if (scriptPaused) {
+                    return;
+                }
+                
                 // 修改会话数据，模拟不同的播放会话
                 const virtualData = JSON.parse(JSON.stringify(originalData));
                 
@@ -183,8 +258,161 @@
         }
     }, true);
     
+    // 检查是否有可用的下一个按钮
+    function hasNextButton() {
+        console.log('🔍 检查下一个按钮...');
+        
+        // 检查Angular导航
+        try {
+            const angular = window.angular;
+            if (angular) {
+                const scope = angular.element(document.body).scope();
+                if (scope && scope.navigation && scope.navigation.nextItem) {
+                    console.log('✅ 找到Angular导航按钮');
+                    return true;
+                }
+                
+                // 检查nextActivity
+                if (scope && scope.nextActivity) {
+                    console.log('✅ 找到nextActivity');
+                    return true;
+                }
+            }
+        } catch (e) {
+            console.log('Angular检查失败:', e);
+        }
+        
+        // 检查具体的按钮选择器（基于HTML结构）
+        const nextSelectors = [
+            'button[ng-click*="changeActivity(nextActivity)"]',
+            'button[ng-if="nextActivity"]',
+            'a[ng-click*="goToNextTopic()"]',
+            'a.next[ng-if*="!isLastTopic()"]',
+            'span.icon-student-circle[ng-click*="navigation.goNext"]',
+            'span.icon-student-circle[ng-click*="goNext"]',
+            '.next-page-button',
+            'button[ng-click*="goNext"]',
+            'a[ng-click*="goNext"]'
+        ];
+        
+        for (const selector of nextSelectors) {
+            try {
+                const nextButton = document.querySelector(selector);
+                if (nextButton && nextButton.offsetParent !== null) {
+                    console.log('✅ 找到下一个按钮:', selector, nextButton);
+                    return true;
+                }
+            } catch (e) {
+                console.log(`选择器失败 ${selector}:`, e);
+            }
+        }
+        
+        // 文本内容检查（更精确）
+        const textSelectors = [
+            'button:contains("下一个")',
+            'a:contains("下一个")',
+            'span:contains("下一个")'
+        ];
+        
+        for (const selector of textSelectors) {
+            try {
+                const elements = document.querySelectorAll(selector.split(':contains')[0]);
+                const nextButton = Array.from(elements).find(el => 
+                    el.textContent.trim().includes('下一个') && el.offsetParent !== null
+                );
+                if (nextButton) {
+                    console.log('✅ 找到文本匹配的按钮:', nextButton.textContent.trim());
+                    return true;
+                }
+            } catch (e) {
+                console.log(`文本选择器失败 ${selector}:`, e);
+            }
+        }
+        
+        console.log('❌ 没有找到下一个按钮');
+        return false;
+    }
+    
+    // 检查页面是否有视频
+    function hasVideos() {
+        const videos = document.querySelectorAll('video');
+        return videos.length > 0;
+    }
+    
+    // 检查所有视频是否播放完成
+    function checkAllVideosCompleted() {
+        const videos = document.querySelectorAll('video');
+        if (videos.length === 0) {
+            return false;
+        }
+        
+        let completedCount = 0;
+        videos.forEach(video => {
+            if (video.ended || (video.duration > 0 && video.currentTime >= video.duration)) {
+                completedCount++;
+            }
+        });
+        
+        return completedCount === videos.length;
+    }
+    
+    // 检查无视频页面并自动跳转
+    function checkNoVideoAutoNext() {
+        // 如果脚本已暂停，不执行检查
+        if (scriptPaused) {
+            return;
+        }
+        
+        // 检查是否有视频
+        if (!hasVideos()) {
+            // 检查是否有下一个按钮
+            if (hasNextButton()) {
+                noVideoCheckCount++;
+                console.log(`无视频页面检测 ${noVideoCheckCount}/${MAX_NO_VIDEO_CHECKS}`);
+                
+                // 连续检查几次确认没有视频后才跳转
+                if (noVideoCheckCount >= MAX_NO_VIDEO_CHECKS) {
+                    console.log('📄 检测到无视频页面且有下一个按钮，自动跳转');
+                    noVideoCheckCount = 0; // 重置计数器
+                    autoClickNext();
+                }
+            } else {
+                // 没有下一个按钮且没有视频，暂停脚本
+                console.log('没有视频也没有下一个按钮，暂停脚本');
+                pauseScript();
+            }
+        } else {
+            // 有视频，重置计数器
+            noVideoCheckCount = 0;
+        }
+    }
+    
+    // 暂停脚本的所有活动
+    function pauseScript() {
+        if (scriptPaused) {
+            return;
+        }
+        
+        scriptPaused = true;
+        allVideosCompleted = true;
+        console.log('🛑 脚本已暂停所有活动');
+        
+        // 停止所有视频
+        const videos = document.querySelectorAll('video');
+        videos.forEach(video => {
+            if (!video.paused) {
+                video.pause();
+            }
+        });
+    }
+    
     // 自动播放逻辑
     function keepVideoPlaying() {
+        // 如果脚本已暂停，不执行自动播放
+        if (scriptPaused) {
+            return;
+        }
+        
         const videos = document.querySelectorAll('video');
         
         videos.forEach(video => {
@@ -216,6 +444,11 @@
     
     // 虚拟用户操作 - 定期触发播放事件来产生更多虚拟请求
     function performVirtualUserAction() {
+        // 如果脚本已暂停，不执行虚拟用户操作
+        if (scriptPaused) {
+            return;
+        }
+        
         const videos = document.querySelectorAll('video');
         const playButtons = document.querySelectorAll('.vjs-play-control');
         
@@ -237,6 +470,10 @@
                     
                     // 100ms后重新播放（触发新的播放统计）
                     setTimeout(() => {
+                        if (scriptPaused) {
+                            return; // 如果脚本已暂停，不继续播放
+                        }
+                        
                         if (playButtons[index]) {
                             const playEvent = new MouseEvent('click', {
                                 bubbles: true,
@@ -254,7 +491,7 @@
         }
     }
     
-    // 新增：设置视频完成监听器
+    // 设置视频完成监听器
     function setupVideoCompletionHandler() {
         const videos = document.querySelectorAll('video');
         
@@ -264,6 +501,7 @@
                 return;
             }
             video.setAttribute('data-completion-handler', 'true');
+            video.playbackRate = currentSpeed;
             
             console.log('为视频添加完成监听器:', video);
             
@@ -272,23 +510,62 @@
                 
                 // 延迟2秒后执行跳转，确保视频完全结束
                 setTimeout(() => {
-                    autoClickNext();
+                    // 检查是否所有视频都播放完成
+                    if (checkAllVideosCompleted()) {
+                        console.log('所有视频播放完成');
+                        
+                        // 检查是否有下一个按钮
+                        if (hasNextButton()) {
+                            autoClickNext();
+                        } else {
+                            console.log('没有找到下一个按钮，暂停脚本');
+                            pauseScript();
+                        }
+                    } else {
+                        // 还有视频未完成，尝试跳转
+                        autoClickNext();
+                    }
                 }, 2000);
             });
         });
     }
     
-    // 新增：自动点击下一个的函数
+    // 自动点击下一个的函数
     function autoClickNext() {
-        // 优先尝试Angular导航函数
+        // 如果脚本已暂停，不执行跳转
+        if (scriptPaused) {
+            return;
+        }
+        
+        console.log('🚀 开始执行自动跳转...');
+        
+        // 优先尝试Angular导航
         try {
             const angular = window.angular;
             if (angular) {
                 const scope = angular.element(document.body).scope();
+                
+                // 检查changeActivity(nextActivity)
+                if (scope && scope.nextActivity && scope.changeActivity) {
+                    console.log('✅ 使用changeActivity(nextActivity)');
+                    scope.changeActivity(scope.nextActivity);
+                    scope.$apply();
+                    return;
+                }
+                
+                // 检查goToNextTopic
+                if (scope && scope.goToNextTopic && typeof scope.goToNextTopic === 'function') {
+                    console.log('✅ 使用goToNextTopic()');
+                    scope.goToNextTopic();
+                    scope.$apply();
+                    return;
+                }
+                
+                // 检查navigation.goNext
                 if (scope && scope.navigation && scope.navigation.goNext) {
-                    console.log('使用Angular navigation.goNext()');
+                    console.log('✅ 使用navigation.goNext()');
                     scope.navigation.goNext();
-                    scope.$apply(); // 触发Angular更新
+                    scope.$apply();
                     return;
                 }
             }
@@ -296,86 +573,127 @@
             console.log('Angular导航失败:', e);
         }
         
-        // 尝试点击下一个按钮 - 多种选择器
+        // 尝试点击具体的按钮
         const nextSelectors = [
+            'button[ng-click*="changeActivity(nextActivity)"]',
+            'button[ng-if="nextActivity"]',
+            'a[ng-click*="goToNextTopic()"]',
+            'a.next[ng-if*="!isLastTopic()"]',
             'span.icon-student-circle[ng-click*="navigation.goNext"]',
-            '.next-page-button',
-            'span:contains("下一页")',
-            'button:contains("下一个")',
-            'a:contains("下一个")'
+            'span.icon-student-circle[ng-click*="goNext"]',
+            'button[ng-click*="goNext"]',
+            'a[ng-click*="goNext"]',
+            '.next-page-button'
         ];
         
         for (const selector of nextSelectors) {
             try {
-                let nextButton;
-                
-                if (selector.includes(':contains')) {
-                    // 处理包含文本的选择器
-                    const text = selector.match(/\((.*)\)/)[1].replace(/"/g, '');
-                    const elements = document.querySelectorAll(selector.split(':contains')[0] || '*');
-                    nextButton = Array.from(elements).find(el => el.textContent.includes(text));
-                } else {
-                    nextButton = document.querySelector(selector);
-                }
-                
-                if (nextButton && nextButton.offsetParent !== null) { // 检查元素是否可见
-                    console.log('找到下一个按钮:', selector, nextButton);
-                    nextButton.click();
+                const nextButton = document.querySelector(selector);
+                if (nextButton && nextButton.offsetParent !== null) {
+                    console.log('✅ 点击按钮:', selector, nextButton);
                     
-                    // 如果是Angular元素，也触发ng-click
-                    if (nextButton.hasAttribute('ng-click')) {
-                        const event = new MouseEvent('click', {
-                            bubbles: true,
-                            cancelable: true
-                        });
-                        nextButton.dispatchEvent(event);
+                    // 先尝试通过Angular执行
+                    if (nextButton.hasAttribute('ng-click') && window.angular) {
+                        const ngClick = nextButton.getAttribute('ng-click');
+                        try {
+                            const scope = window.angular.element(nextButton).scope();
+                            if (scope) {
+                                console.log('执行ng-click:', ngClick);
+                                scope.$eval(ngClick);
+                                scope.$apply();
+                                return;
+                            }
+                        } catch (e) {
+                            console.log('Angular执行失败:', e);
+                        }
                     }
                     
-                    console.log('自动点击下一个按钮成功');
+                    // 如果Angular执行失败，尝试直接点击
+                    nextButton.click();
+                    
+                    // 强制触发事件
+                    const clickEvent = new MouseEvent('click', {
+                        bubbles: true,
+                        cancelable: true,
+                        view: window
+                    });
+                    nextButton.dispatchEvent(clickEvent);
+                    
+                    console.log('✅ 自动跳转执行完成');
                     return;
                 }
             } catch (e) {
-                console.log(`尝试选择器 ${selector} 失败:`, e);
+                console.log(`选择器 ${selector} 失败:`, e);
             }
         }
         
-        console.log('未找到可用的下一个按钮');
-        
-        // 最后尝试查找所有可能的下一个链接
-        const allLinks = document.querySelectorAll('a, button, span[ng-click]');
-        for (const link of allLinks) {
-            const text = link.textContent.trim();
-            const ngClick = link.getAttribute('ng-click') || '';
+        // 最后尝试文本匹配
+        const allElements = document.querySelectorAll('button, a, span[ng-click], div[ng-click]');
+        for (const element of allElements) {
+            const text = element.textContent.trim();
+            const ngClick = element.getAttribute('ng-click') || '';
             
-            if (text.includes('下一个') || text.includes('下一页') || text.includes('继续') || 
-                ngClick.includes('goNext') || ngClick.includes('next')) {
-                console.log('找到可能的下一个按钮:', link);
-                link.click();
+            if ((text.includes('下一个') || ngClick.includes('changeActivity') || 
+                 ngClick.includes('goToNextTopic') || ngClick.includes('goNext')) && 
+                 element.offsetParent !== null) {
+                
+                console.log('✅ 点击文本匹配按钮:', text, element);
+                
+                // 尝试Angular执行
+                if (ngClick && window.angular) {
+                    try {
+                        const scope = window.angular.element(element).scope();
+                        if (scope) {
+                            scope.$eval(ngClick);
+                            scope.$apply();
+                            return;
+                        }
+                    } catch (e) {
+                        console.log('Angular执行失败:', e);
+                    }
+                }
+                
+                // 直接点击
+                element.click();
                 return;
             }
         }
+        
+        console.log('❌ 没有找到任何可点击的按钮，暂停脚本');
+        pauseScript();
     }
     
-    // 每3秒检查一次视频播放状态
-    setInterval(keepVideoPlaying, 5000);
+    // 每2秒检查一次视频播放状态
+    setInterval(keepVideoPlaying, 2000);
     
     // 每1秒执行一次虚拟用户操作
     setInterval(performVirtualUserAction, 1000);
     
-    // 新增：定期检查新的视频元素（处理动态加载）
+    // 定期检查新的视频元素（处理动态加载）
     setInterval(setupVideoCompletionHandler, 3000);
+    
+    // 新增：每6秒检查无视频页面并自动跳转
+    setInterval(checkNoVideoAutoNext, 6000);
     
     // 页面加载完成后立即检查
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', () => {
-            setTimeout(keepVideoPlaying, 1000);
-            setTimeout(setupVideoCompletionHandler, 1000);
+            setTimeout(() => {
+                keepVideoPlaying();
+                setupVideoCompletionHandler();
+                createSpeedControlUI();
+            }, 1000);
+            setTimeout(checkNoVideoAutoNext, 3000); // 页面加载后3秒开始检查
         });
     } else {
-        setTimeout(keepVideoPlaying, 1000);
-        setTimeout(setupVideoCompletionHandler, 1000);
+        setTimeout(() => {
+            keepVideoPlaying();
+            setupVideoCompletionHandler();
+            createSpeedControlUI();
+        }, 1000);
+        setTimeout(checkNoVideoAutoNext, 3000); // 页面加载后3秒开始检查
     }
     
-    console.log('LMS视频超简播放脚本启动 v0.13 - 智能时间段分割版 + 虚拟用户操作 + 自动下一个');
+    console.log('LMS视频超简播放脚本启动 v0.15 - 智能时间段分割版 + 虚拟用户操作 + 自动下一个 + 智能停止 + 无视频自动跳转+ 视频倍速控制');
     
 })();
