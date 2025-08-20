@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         南大LMS智慧教育平台|MOOC增强
 // @namespace    http://tampermonkey.net/
-// @version      0.2
+// @version      0.20
 // @description  南大LMS平台与MOOC平台加速进度 + 自动下一个 + 智能停止 + 无视频自动跳转 + 视频倍速控制 + 解除播放限制
 // @author       Hronrad
 // @license    GPL-3.0-only
