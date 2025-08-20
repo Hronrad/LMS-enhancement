@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         南大LMS智慧教育平台|MOOC增强
 // @namespace    http://tampermonkey.net/
-// @version      0.18
-// @description  超简LMS视频播放 + 自动下一个 + 智能停止 + 无视频自动跳转 + 视频倍速控制 + 解除播放限制
+// @version      0.2
+// @description  南大LMS平台与MOOC平台加速进度 + 自动下一个 + 智能停止 + 无视频自动跳转 + 视频倍速控制 + 解除播放限制
 // @author       Hronrad
 // @license    GPL-3.0-only
 // @match        https://lms.nju.edu.cn/*
@@ -21,11 +21,145 @@
     let allVideosCompleted = false;
     let scriptPaused = false;
     let noVideoCheckCount = 0;
-    const MAX_NO_VIDEO_CHECKS = 3;
+    const MAX_NO_VIDEO_CHECKS = 5;
     let currentSpeed = 1;
     let processedVideos = new Set();
+    let contentReady = false;
+    let pageLoadTime = Date.now();
+
+    const SPEED_STORAGE_KEY = `lms-video-speed-${location.hostname}`;
     
     const isICourse163 = location.hostname.includes('icourse163.org');
+
+    function checkContentReady() {
+        const hasMainContent = document.querySelector('[ng-view]') || 
+                              document.querySelector('.main-content') ||
+                              document.querySelector('#main') ||
+                              document.querySelector('.content-area');
+        
+        const hasAngular = window.angular && document.querySelector('[ng-app]');
+        const timeElapsed = Date.now() - pageLoadTime > 2000;
+        
+        const ready = (hasMainContent || hasAngular) && timeElapsed;
+        
+        return ready;
+    }
+
+    function waitForContentReady(callback, maxWait = 15000) {
+        const startTime = Date.now();
+        
+        function check() {
+            if (checkContentReady()) {
+                contentReady = true;
+                callback();
+            } else if (Date.now() - startTime < maxWait) {
+                setTimeout(check, 1000);
+            } else {
+                contentReady = true;
+                callback();
+            }
+        }
+        
+        check();
+    }
+
+    function handlePageChange() {
+        scriptPaused = false;
+        allVideosCompleted = false;
+        noVideoCheckCount = 0;
+        contentReady = false;
+        pageLoadTime = Date.now();
+        
+        waitForContentReady(() => {});
+    }
+
+    function setupPageChangeListener() {
+        let currentUrl = location.href;
+        let currentHash = location.hash;
+        
+        const observer = new MutationObserver(() => {
+            if (location.href !== currentUrl || location.hash !== currentHash) {
+                currentUrl = location.href;
+                currentHash = location.hash;
+                handlePageChange();
+            }
+        });
+        
+        observer.observe(document.body, {
+            childList: true,
+            subtree: true
+        });
+        
+        window.addEventListener('hashchange', handlePageChange);
+        window.addEventListener('popstate', handlePageChange);
+    }
+
+    function loadSavedSpeed() {
+        try {
+            const savedSpeed = localStorage.getItem(SPEED_STORAGE_KEY);
+            if (savedSpeed) {
+                const speed = parseFloat(savedSpeed);
+                if ([0.1, 1, 3, 16].includes(speed)) {
+                    currentSpeed = speed;
+                }
+            }
+        } catch (e) {}
+    }
+    
+    function saveSpeed(speed) {
+        try {
+            localStorage.setItem(SPEED_STORAGE_KEY, speed.toString());
+            window.dispatchEvent(new CustomEvent('lms-speed-changed', { 
+                detail: { speed, timestamp: Date.now() } 
+            }));
+        } catch (e) {}
+    }
+    
+    function syncSpeedAcrossTabs() {
+        window.addEventListener('lms-speed-changed', (e) => {
+            if (e.detail.speed !== currentSpeed) {
+                currentSpeed = e.detail.speed;
+                applySpeedToVideos();
+                updateSpeedButton();
+            }
+        });
+    
+        window.addEventListener('storage', (e) => {
+            if (e.key === SPEED_STORAGE_KEY && e.newValue) {
+                const newSpeed = parseFloat(e.newValue);
+                if ([0.1, 1, 3, 16].includes(newSpeed) && newSpeed !== currentSpeed) {
+                    currentSpeed = newSpeed;
+                    applySpeedToVideos();
+                    updateSpeedButton();
+                }
+            }
+        });
+    }
+    
+    function applySpeedToVideos() {
+        document.querySelectorAll('video').forEach(video => {
+            if (video.playbackRate !== currentSpeed) {
+                video.playbackRate = currentSpeed;
+            }
+        });
+    }
+    
+    function updateSpeedButton() {
+        const speedButton = document.getElementById('lms-speed-button');
+        const speedMenu = document.getElementById('lms-speed-menu');
+        
+        if (speedButton) {
+            speedButton.innerHTML = `${currentSpeed}x`;
+        }
+        
+        if (speedMenu) {
+            speedMenu.querySelectorAll('div').forEach((div, i) => {
+                const itemSpeed = [0.1, 1, 3, 16][i];
+                div.style.background = itemSpeed === currentSpeed ? '#e3f2fd' : 'white';
+                div.style.fontWeight = itemSpeed === currentSpeed ? 'bold' : 'normal';
+            });
+        }
+    }
 
     function removeVideoRestrictions() {
         const videos = document.querySelectorAll('video:not([data-restrictions-removed])');
@@ -225,21 +359,21 @@
     
     function setVideoSpeed(speed) {
         currentSpeed = speed;
-        document.querySelectorAll('video').forEach(video => video.playbackRate = speed);
+        saveSpeed(speed);
+        applySpeedToVideos();
+        updateSpeedButton();
     }
     
     function initICourse163() {
+        loadSavedSpeed();
+        syncSpeedAcrossTabs();
         removeVideoRestrictions();
         removePageRestrictions();
         monitorRestrictions();
         createSpeedControlUI();
         
         setInterval(() => {
-            document.querySelectorAll('video').forEach(video => {
-                if (video.playbackRate !== currentSpeed) {
-                    video.playbackRate = currentSpeed;
-                }
-            });
+            applySpeedToVideos();
         }, 2000);
     }
     
@@ -251,6 +385,9 @@
         }
         return;
     }
+
+    loadSavedSpeed();
+    syncSpeedAcrossTabs();
     
     Object.defineProperty(document, 'hidden', { get: () => false, configurable: true });
     Object.defineProperty(document, 'visibilityState', { get: () => 'visible', configurable: true });
@@ -393,7 +530,9 @@
             'a[ng-click*="goToNextTopic()"]',
             'a.next[ng-if*="!isLastTopic()"]',
             'span.icon-student-circle[ng-click*="navigation.goNext"]',
-            'button[ng-click*="goNext"]'
+            'button[ng-click*="goNext"]',
+            'a.next[ng-click="goToNextTopic()"]',
+            'button.button[ng-click*="changeActivity(nextActivity)"]'
         ];
         
         for (const selector of nextSelectors) {
@@ -402,6 +541,26 @@
                 return true;
             }
         }
+        
+        try {
+            const nextTopicLink = document.querySelector('a.next[ng-click="goToNextTopic()"]');
+            if (nextTopicLink) {
+                const scope = window.angular.element(nextTopicLink).scope();
+                if (scope && typeof scope.isLastTopic === 'function') {
+                    if (!scope.isLastTopic() && nextTopicLink.offsetParent !== null) {
+                        return true;
+                    }
+                }
+            }
+            
+            const nextActivityBtn = document.querySelector('button[ng-click*="changeActivity(nextActivity)"]');
+            if (nextActivityBtn) {
+                const scope = window.angular.element(nextActivityBtn).scope();
+                if (scope && scope.nextActivity && nextActivityBtn.offsetParent !== null) {
+                    return true;
+                }
+            }
+        } catch (e) {}
         
         const elements = document.querySelectorAll('button, a');
         for (const el of elements) {
@@ -421,13 +580,23 @@
         const videos = document.querySelectorAll('video');
         if (videos.length === 0) return false;
         
-        return Array.from(videos).every(video => 
-            video.ended || (video.duration > 0 && video.currentTime >= video.duration)
-        );
+        return Array.from(videos).every(video => {
+            const isEnded = video.ended;
+            const isDurationComplete = video.duration > 0 && 
+                                 Math.abs(video.currentTime - video.duration) < 1;
+            const isNearComplete = video.duration > 0 && 
+                             video.currentTime / video.duration >= 0.98;
+            
+            return isEnded || isDurationComplete || isNearComplete;
+        });
     }
     
     function checkNoVideoAutoNext() {
         if (scriptPaused) return;
+        
+        if (!contentReady) {
+            return;
+        }
         
         if (!hasVideos()) {
             if (hasNextButton()) {
@@ -574,7 +743,9 @@
             'button[ng-if="nextActivity"]',
             'a[ng-click*="goToNextTopic()"]',
             'a.next[ng-if*="!isLastTopic()"]',
-            'button[ng-click*="goNext"]'
+            'button[ng-click*="goNext"]',
+            'a.next[ng-click="goToNextTopic()"]',
+            'button.button[ng-click*="changeActivity(nextActivity)"]'
         ];
         
         for (const selector of nextSelectors) {
@@ -626,7 +797,10 @@
     
     setInterval(keepVideoPlaying, 2000);
     setInterval(performVirtualUserAction, 1000);
-    setInterval(setupVideoCompletionHandler, 3000);
+    setInterval(() => {
+        setupVideoCompletionHandler();
+        applySpeedToVideos();
+    }, 3000);
     setInterval(checkNoVideoAutoNext, 6000);
     
     function init() {
@@ -636,16 +810,20 @@
         removeVideoRestrictions();
         removePageRestrictions();
         monitorRestrictions();
+        applySpeedToVideos();
+        setupPageChangeListener();
+        
+        waitForContentReady(() => {
+            setTimeout(checkNoVideoAutoNext, 3000);
+        });
     }
     
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', () => {
             setTimeout(init, 1000);
-            setTimeout(checkNoVideoAutoNext, 3000);
         });
     } else {
         setTimeout(init, 1000);
-        setTimeout(checkNoVideoAutoNext, 3000);
     }
     
 })();

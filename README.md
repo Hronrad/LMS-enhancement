@@ -9,8 +9,20 @@
 
 ## 一键安装
 
+### 第一步
 **请先安装 [Tampermonkey](https://www.tampermonkey.net/) 浏览器扩展**
 
+各浏览器具体链接：
+
+[![Chrome](https://img.shields.io/badge/Chrome-4285F4?style=for-the-badge&logo=googlechrome&logoColor=white)](https://chromewebstore.google.com/detail/tampermonkey/dhdgffkkebhmkfjojejmpbldmpobfkfo)
+[![Firefox](https://img.shields.io/badge/Firefox-FF7139?style=for-the-badge&logo=firefox&logoColor=white)](https://addons.mozilla.org/zh-CN/firefox/addon/tampermonkey/)
+[![Edge](https://img.shields.io/badge/Edge-0078D7?style=for-the-badge&logo=microsoftedge&logoColor=white)](https://microsoftedge.microsoft.com/addons/detail/%E7%AF%A1%E6%94%B9%E7%8C%B4/iikmkjmpaadaobahmlepeloendndfphd)
+[![Safari](https://img.shields.io/badge/Safari-000000?style=for-the-badge&logo=safari&logoColor=white)](https://apps.apple.com/us/app/tampermonkey/id1482490089)
+[![Opera](https://img.shields.io/badge/Opera-FF1B2D?style=for-the-badge&logo=opera&logoColor=white)](https://addons.opera.com/zh-cn/extensions/details/tampermonkey-beta/)
+
+
+
+### 第二步
 点击下面的按钮直接安装最新版本：
 
 [![Install Script](https://img.shields.io/badge/Install-UserScript-green?style=for-the-badge&logo=tampermonkey)](https://greasyfork.org/zh-CN/scripts/546406-%E5%8D%97%E5%A4%A7lms%E6%99%BA%E6%85%A7%E6%95%99%E8%82%B2%E5%B9%B3%E5%8F%B0-mooc%E5%A2%9E%E5%BC%BA/)
@@ -26,4 +38,11 @@
 4. ⏭️播放完成后自动播放下一个视频，跳过无视频页面
 5. 🚀侧边菜单可控制多种倍速
 
-**⭐ 如果这个脚本对您有帮助，请给个 Star 支持一下！**
+## 温馨提示
+- 如遇页面卡顿/功能失效等问题，以及“系统繁忙”提示时，请立即通过 `ctrl + shift + R` 刷新缓存，以及 `F5` 强制刷新。
+
+- 建议遵循适度使用和非必要不使用的准则。使用过程中您可随时选择关闭该脚本。由使用此脚本导致的任何问题请自行承担风险。
+
+- 欢迎反馈问题和建议！
+
+**⭐ 如果这个脚本对您有帮助，请给个 Star 支持一下！(\*╹▽╹\*)**
