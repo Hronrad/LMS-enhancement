@@ -23,45 +23,31 @@
     let noVideoCheckCount = 0;
     const MAX_NO_VIDEO_CHECKS = 3;
     let currentSpeed = 1;
-    let processedVideos = new Set(); // 防止重复处理视频
+    let processedVideos = new Set();
     
-    // 检测当前网站
     const isICourse163 = location.hostname.includes('icourse163.org');
 
-
-    // 简化：解除视频播放限制
     function removeVideoRestrictions() {
         const videos = document.querySelectorAll('video:not([data-restrictions-removed])');
         
         videos.forEach(video => {
-            // 标记已处理，防止重复
             video.setAttribute('data-restrictions-removed', 'true');
-            
-            // 解除限制
             video.setAttribute('allow-foward-seeking', 'true');
             video.setAttribute('data-allow-download', 'true');
             video.setAttribute('allow-right-click', 'true');
             video.removeAttribute('forward-seeking-warning');
             video.controls = true;
-            
-            // 移除右键限制
             video.oncontextmenu = null;
-            
-            console.log('✅ 解除视频限制');
         });
     }
 
-    // 简化：解除页面限制
     function removePageRestrictions() {
         document.oncontextmenu = null;
         document.onselectstart = null;
         document.ondragstart = null;
         document.onkeydown = null;
-        
-        console.log('✅ 解除页面限制');
     }
 
-    // 简化：监控限制（减少频繁触发）
     function monitorRestrictions() {
         const observer = new MutationObserver((mutations) => {
             let needsUpdate = false;
@@ -87,73 +73,167 @@
         });
     }
 
-    // 创建速度控制UI
     function createSpeedControlUI() {
-        if (document.getElementById('lms-speed-button')) return; // 防止重复创建
+        if (document.getElementById('lms-speed-container')) return;
+        
+        const container = document.createElement('div');
+        container.id = 'lms-speed-container';
+        container.style.cssText = `
+            position: fixed;
+            top: 50%;
+            right: -45px;
+            transform: translateY(-50%);
+            z-index: 10000;
+            transition: right 0.3s ease;
+            display: flex;
+            flex-direction: column;
+            align-items: flex-end;
+        `;
         
         const speedButton = document.createElement('button');
         speedButton.id = 'lms-speed-button';
         speedButton.innerHTML = `${currentSpeed}x`;
-        speedButton.style.cssText = `position:fixed;top:20px;right:20px;width:60px;height:35px;background:#007bff;color:white;border:none;border-radius:8px;font-size:14px;cursor:pointer;z-index:10000;box-shadow:0 4px 12px rgba(0,123,255,0.3);transition:all 0.3s ease`;
+        speedButton.style.cssText = `
+            width: 60px;
+            height: 35px;
+            background: #007bff;
+            color: white;
+            border: none;
+            border-radius: 8px 0 0 8px;
+            font-size: 14px;
+            cursor: pointer;
+            box-shadow: 0 4px 12px rgba(0,123,255,0.3);
+            transition: all 0.3s ease;
+            margin-bottom: 5px;
+        `;
         
         const speedMenu = document.createElement('div');
         speedMenu.id = 'lms-speed-menu';
-        speedMenu.style.cssText = `position:fixed;top:60px;right:20px;background:white;border:1px solid #ddd;border-radius:12px;box-shadow:0 8px 24px rgba(0,0,0,0.15);z-index:10001;display:none;min-width:120px;overflow:hidden`;
+        speedMenu.style.cssText = `
+            background: white;
+            border: 1px solid #ddd;
+            border-radius: 8px 0 0 8px;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.15);
+            min-width: 80px;
+            overflow: hidden;
+            opacity: 0;
+            transform: translateX(10px);
+            transition: all 0.3s ease;
+            pointer-events: none;
+        `;
         
         [0.1, 1, 3, 16].forEach(speed => {
             const item = document.createElement('div');
             item.textContent = `${speed}x`;
-            item.style.cssText = `padding:12px 16px;cursor:pointer;transition:background 0.2s ease;${speed === currentSpeed ? 'background:#e3f2fd;font-weight:bold' : ''}`;
+            item.style.cssText = `
+                padding: 10px 16px;
+                cursor: pointer;
+                transition: background 0.2s ease;
+                font-size: 13px;
+                text-align: center;
+                ${speed === currentSpeed ? 'background: #e3f2fd; font-weight: bold;' : ''}
+            `;
             item.onmouseenter = () => item.style.background = speed === currentSpeed ? '#bbdefb' : '#f5f5f5';
             item.onmouseleave = () => item.style.background = speed === currentSpeed ? '#e3f2fd' : 'white';
             item.onclick = () => {
                 setVideoSpeed(speed);
                 speedButton.innerHTML = `${speed}x`;
-                speedMenu.style.display = 'none';
-                speedMenu.querySelectorAll('div').forEach((div, i) => {
-                    const itemSpeed = [0.1, 1, 3, 16][i];
-                    div.style.background = itemSpeed === speed ? '#e3f2fd' : 'white';
-                    div.style.fontWeight = itemSpeed === speed ? 'bold' : 'normal';
-                });
+                updateMenuSelection(speedMenu, speed);
             };
             speedMenu.appendChild(item);
         });
         
-        speedButton.onmouseenter = () => {
+        function updateMenuSelection(menu, selectedSpeed) {
+            menu.querySelectorAll('div').forEach((div, i) => {
+                const itemSpeed = [0.1, 1, 3, 16][i];
+                div.style.background = itemSpeed === selectedSpeed ? '#e3f2fd' : 'white';
+                div.style.fontWeight = itemSpeed === selectedSpeed ? 'bold' : 'normal';
+            });
+        }
+        
+        container.appendChild(speedButton);
+        container.appendChild(speedMenu);
+        
+        let isExpanded = false;
+        let hideTimeout;
+        
+        function showControls() {
+            clearTimeout(hideTimeout);
+            isExpanded = true;
+            container.style.right = '0px';
             speedButton.style.background = '#0056b3';
-            speedButton.style.transform = 'translateY(-2px)';
-            speedButton.style.boxShadow = '0 6px 16px rgba(0,123,255,0.4)';
-        };
-        speedButton.onmouseleave = () => {
-            speedButton.style.background = '#007bff';
-            speedButton.style.transform = 'translateY(0)';
-            speedButton.style.boxShadow = '0 4px 12px rgba(0,123,255,0.3)';
+            speedButton.style.transform = 'scale(1.05)';
+            speedMenu.style.opacity = '1';
+            speedMenu.style.transform = 'translateX(0)';
+            speedMenu.style.pointerEvents = 'auto';
+        }
+        
+        function hideControls() {
+            hideTimeout = setTimeout(() => {
+                isExpanded = false;
+                container.style.right = '-45px';
+                speedButton.style.background = '#007bff';
+                speedButton.style.transform = 'scale(1)';
+                speedMenu.style.opacity = '0';
+                speedMenu.style.transform = 'translateX(10px)';
+                speedMenu.style.pointerEvents = 'none';
+            }, 300);
+        }
+        
+        container.onmouseenter = showControls;
+        container.onmouseleave = hideControls;
+        
+        speedButton.onclick = (e) => {
+            e.stopPropagation();
+            if (isExpanded) {
+                speedMenu.style.display = speedMenu.style.display === 'none' ? 'block' : 'none';
+            }
         };
         
-        speedButton.onclick = () => speedMenu.style.display = speedMenu.style.display === 'none' ? 'block' : 'none';
-        document.onclick = (e) => { 
-            if (!speedMenu.contains(e.target) && e.target !== speedButton) 
-                speedMenu.style.display = 'none'; 
-        };
+        document.addEventListener('click', (e) => {
+            if (!container.contains(e.target)) {
+                speedMenu.style.display = 'block';
+            }
+        });
         
-        document.body.appendChild(speedButton);
-        document.body.appendChild(speedMenu);
+        const hoverIndicator = document.createElement('div');
+        hoverIndicator.style.cssText = `
+            position: absolute;
+            right: 0;
+            top: 50%;
+            transform: translateY(-50%);
+            width: 3px;
+            height: 30px;
+            background: linear-gradient(45deg, #007bff, #0056b3);
+            border-radius: 3px 0 0 3px;
+            opacity: 0.7;
+            animation: pulse 2s infinite;
+        `;
+        
+        const style = document.createElement('style');
+        style.textContent = `
+            @keyframes pulse {
+                0%, 100% { opacity: 0.7; }
+                50% { opacity: 0.3; }
+            }
+        `;
+        document.head.appendChild(style);
+        
+        container.appendChild(hoverIndicator);
+        document.body.appendChild(container);
     }
     
     function setVideoSpeed(speed) {
         currentSpeed = speed;
         document.querySelectorAll('video').forEach(video => video.playbackRate = speed);
-        console.log(`设置播放速度: ${speed}x`);
     }
     
-    // icourse163 专用：简化初始化
     function initICourse163() {
         removeVideoRestrictions();
         removePageRestrictions();
         monitorRestrictions();
         createSpeedControlUI();
         
-        // 简单的视频速度应用
         setInterval(() => {
             document.querySelectorAll('video').forEach(video => {
                 if (video.playbackRate !== currentSpeed) {
@@ -161,11 +241,8 @@
                 }
             });
         }, 2000);
-        
-        console.log('✅ icourse163 增强功能已启用：解除限制 + 倍速控制');
     }
     
-    // 如果是 icourse163 网站，只运行简化功能
     if (isICourse163) {
         if (document.readyState === 'loading') {
             document.addEventListener('DOMContentLoaded', () => setTimeout(initICourse163, 500));
@@ -175,14 +252,10 @@
         return;
     }
     
-    // 以下是原有的南大LMS完整功能代码...
-    
-    // 重写页面可见性API
     Object.defineProperty(document, 'hidden', { get: () => false, configurable: true });
     Object.defineProperty(document, 'visibilityState', { get: () => 'visible', configurable: true });
     document.addEventListener('visibilitychange', (e) => e.stopImmediatePropagation(), true);
     
-    // 拦截XMLHttpRequest用于虚拟多开
     const originalOpen = XMLHttpRequest.prototype.open;
     XMLHttpRequest.prototype.open = function(method, url, ...args) {
         this._method = method;
@@ -210,19 +283,15 @@
                 
                 if (!processedRequests.has(requestKey)) {
                     processedRequests.add(requestKey);
-                    console.log('检测到播放请求:', url, jsonData);
                     createVirtualSessions(url, jsonData);
                     setTimeout(() => processedRequests.delete(requestKey), 10000);
                 }
-            } catch (e) {
-                console.log('数据解析失败:', e);
-            }
+            } catch (e) {}
         }
         
         return originalSend.call(this, data);
     };
     
-    // 创建虚拟播放会话
     function createVirtualSessions(url, originalData) {
         if (scriptPaused) return;
         
@@ -262,7 +331,6 @@
                 
                 const duration = (virtualData.end || 0) - (virtualData.start || 0);
                 if (duration <= 0 || duration > maxDuration * 2) {
-                    console.log(`跳过虚拟会话${i}，持续时间异常:`, duration);
                     return;
                 }
                 
@@ -274,19 +342,12 @@
                     },
                     body: JSON.stringify(virtualData),
                     credentials: 'same-origin'
-                }).then(response => {
-                    console.log(`虚拟会话${i}响应: ${response.status}`);
-                }).catch(error => {
-                    console.log(`虚拟会话${i}错误:`, error.message);
-                });
-                
-                console.log(`发送虚拟会话${i} (duration: ${duration}):`, virtualData);
+                }).then(response => {}).catch(error => {});
                 
             }, i * 400 + Math.random() * 300);
         }
     }
     
-    // 用户操作检测
     function detectUserAction(e) {
         const target = e.target;
         
@@ -301,7 +362,6 @@
                 document.querySelectorAll('video').forEach(video => {
                     if (video.paused) {
                         isUserPaused = true;
-                        console.log('检测到用户手动暂停');
                     }
                 });
             }, 100);
@@ -315,7 +375,6 @@
         }
     }, true);
     
-    // 检查下一个按钮
     function hasNextButton() {
         try {
             const angular = window.angular;
@@ -374,12 +433,10 @@
             if (hasNextButton()) {
                 noVideoCheckCount++;
                 if (noVideoCheckCount >= MAX_NO_VIDEO_CHECKS) {
-                    console.log('📄 检测到无视频页面，自动跳转');
                     noVideoCheckCount = 0;
                     autoClickNext();
                 }
             } else {
-                console.log('没有视频也没有下一个按钮，暂停脚本');
                 pauseScript();
             }
         } else {
@@ -392,7 +449,6 @@
         
         scriptPaused = true;
         allVideosCompleted = true;
-        console.log('🛑 脚本已暂停');
         
         document.querySelectorAll('video').forEach(video => {
             if (!video.paused) {
@@ -470,12 +526,8 @@
             video.playbackRate = currentSpeed;
             
             video.addEventListener('ended', function() {
-                console.log('视频播放完成');
-                
                 setTimeout(() => {
                     if (checkAllVideosCompleted()) {
-                        console.log('所有视频播放完成');
-                        
                         if (hasNextButton()) {
                             autoClickNext();
                         } else {
@@ -491,8 +543,6 @@
     
     function autoClickNext() {
         if (scriptPaused) return;
-        
-        console.log('🚀 执行自动跳转');
         
         try {
             const angular = window.angular;
@@ -574,13 +624,11 @@
         pauseScript();
     }
     
-    // 定时器
     setInterval(keepVideoPlaying, 2000);
     setInterval(performVirtualUserAction, 1000);
     setInterval(setupVideoCompletionHandler, 3000);
     setInterval(checkNoVideoAutoNext, 6000);
     
-    // 初始化
     function init() {
         keepVideoPlaying();
         setupVideoCompletionHandler();
@@ -599,7 +647,5 @@
         setTimeout(init, 1000);
         setTimeout(checkNoVideoAutoNext, 3000);
     }
-    
-    console.log('LMS视频超简播放脚本启动 v0.18 - 极简版');
     
 })();
