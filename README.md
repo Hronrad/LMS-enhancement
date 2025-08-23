@@ -20,9 +20,17 @@
 [![Safari](https://img.shields.io/badge/Safari-000000?style=for-the-badge&logo=safari&logoColor=white)](https://apps.apple.com/us/app/tampermonkey/id1482490089)
 [![Opera](https://img.shields.io/badge/Opera-FF1B2D?style=for-the-badge&logo=opera&logoColor=white)](https://addons.opera.com/zh-cn/extensions/details/tampermonkey-beta/)
 
-
-
 ### 第二步
+第一次安装需要打开浏览器的开发者模式。
+
+Edge浏览器: 地址栏输入edge://extensions/并回车，打开开发人员模式
+<img src="./image/developer.png" alt="edge" width="250">
+
+Chrome浏览器: 地址栏输入chrome://extensions/并回车，打开开发人员模式
+
+其他浏览器同理。
+
+### 第三步
 点击下面的按钮直接安装最新版本：
 
 [![Install Script](https://img.shields.io/badge/Install-UserScript-green?style=for-the-badge&logo=tampermonkey)](https://greasyfork.org/zh-CN/scripts/546406-%E5%8D%97%E5%A4%A7lms%E6%99%BA%E6%85%A7%E6%95%99%E8%82%B2%E5%B9%B3%E5%8F%B0-mooc%E5%A2%9E%E5%BC%BA/)
@@ -40,7 +48,7 @@
 
 ## 使用演示
 其他功能自动开启，如需倍速请按下图从右侧菜单选择所需倍速
-![演示动图](./demo.gif)
+![演示动图](./image/demo.gif)
 
 ## 温馨提示
 - 当您在对应网站看到页面右侧蓝色隐藏倍速按钮时，代表脚本已经成功安装并生效。
