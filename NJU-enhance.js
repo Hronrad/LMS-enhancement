@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         南大LMS智慧教育平台|MOOC增强
 // @namespace    http://tampermonkey.net/
-// @version      0.21
-// @description  南大LMS平台与MOOC平台加速进度 + 自动下一个 + 智能停止 + 无视频自动跳转 + 视频倍速控制 + 解除播放限制 + 验证码自动识别
+// @version      0.30
+// @description  南大LMS平台与MOOC平台加速进度/自动下一个/智能停止/无视频自动跳转/视频倍速控制/解除播放限制 + 验证码自动识别 + 自动下载课件
 // @author       Hronrad
 // @license    GPL-3.0-only
 // @match        https://lms.nju.edu.cn/*
@@ -278,6 +278,25 @@
             };
             speedMenu.appendChild(item);
         });
+
+        // 添加设置选项（分割线）
+        const divider = document.createElement('div');
+        divider.style.cssText = 'height: 1px; background: #ddd; margin: 5px 0;';
+        speedMenu.appendChild(divider);
+
+        const settingsItem = document.createElement('div');
+        settingsItem.textContent = '⚙️ 设置';
+        settingsItem.style.cssText = `
+            padding: 10px 16px;
+            cursor: pointer;
+            transition: background 0.2s ease;
+            font-size: 13px;
+            text-align: center;
+        `;
+        settingsItem.onmouseenter = () => settingsItem.style.background = '#f5f5f5';
+        settingsItem.onmouseleave = () => settingsItem.style.background = 'white';
+        settingsItem.onclick = () => showSettingsPanel();
+        speedMenu.appendChild(settingsItem);
 
         function updateMenuSelection(menu, selectedSpeed) {
             menu.querySelectorAll('div').forEach((div, i) => {
@@ -828,11 +847,109 @@
         setTimeout(init, 1000);
     }
 
-    // ======= 验证码自动识别与设置（集成到倍速菜单） =======
+    // ======= 全局设置管理 =======
+    const GlobalSettings = {
+        config: {
+            captchaAuto: true,
+            captchaApi: 'http://127.0.0.1:5000/ocr'
+        },
+        load() {
+            try {
+                const saved = localStorage.getItem('lms-enhance-settings');
+                if (saved) Object.assign(this.config, JSON.parse(saved));
+            } catch (e) {}
+        },
+        save() {
+            try {
+                localStorage.setItem('lms-enhance-settings', JSON.stringify(this.config));
+            } catch (e) {}
+        }
+    };
+    GlobalSettings.load();
+
+    function showSettingsPanel() {
+        let panel = document.getElementById('lms-settings-panel');
+        if (panel) {
+            panel.style.display = 'flex';
+            return;
+        }
+
+        panel = document.createElement('div');
+        panel.id = 'lms-settings-panel';
+        panel.style.cssText = `
+            display: flex;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.5);
+            z-index: 20000;
+            align-items: center;
+            justify-content: center;
+        `;
+
+        const content = document.createElement('div');
+        content.style.cssText = `
+            background: white;
+            border-radius: 12px;
+            padding: 24px;
+            min-width: 400px;
+            max-width: 500px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+        `;
+
+        content.innerHTML = `
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                <h3 style="margin: 0; font-size: 18px;">增强脚本设置</h3>
+                <button id="close-settings" style="background: none; border: none; font-size: 24px; cursor: pointer; color: #666;">×</button>
+            </div>
+            <div style="margin-bottom: 16px;">
+                <label style="display: flex; align-items: center; margin-bottom: 12px;">
+                    <input type="checkbox" id="setting-captcha-auto" ${GlobalSettings.config.captchaAuto ? 'checked' : ''} style="margin-right: 8px;">
+                    <span>自动识别验证码</span>
+                </label>
+                <div style="margin-left: 24px; margin-bottom: 12px;">
+                    <label style="display: block; margin-bottom: 4px; font-size: 13px; color: #666;">OCR API 地址:</label>
+                    <input type="text" id="setting-captcha-api" value="${GlobalSettings.config.captchaApi}" style="width: 100%; padding: 6px 10px; border: 1px solid #ddd; border-radius: 4px; font-size: 13px;">
+                </div>
+            </div>
+            <div style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px;">
+                <button id="cancel-settings" style="padding: 8px 16px; border: 1px solid #ddd; background: white; border-radius: 4px; cursor: pointer;">取消</button>
+                <button id="save-settings" style="padding: 8px 16px; border: none; background: #007bff; color: white; border-radius: 4px; cursor: pointer;">保存</button>
+            </div>
+        `;
+
+        panel.appendChild(content);
+        document.body.appendChild(panel);
+
+        // 关闭按钮
+        document.getElementById('close-settings').onclick = () => panel.style.display = 'none';
+        document.getElementById('cancel-settings').onclick = () => panel.style.display = 'none';
+        panel.onclick = (e) => {
+            if (e.target === panel) panel.style.display = 'none';
+        };
+
+        // 保存按钮
+        document.getElementById('save-settings').onclick = () => {
+            GlobalSettings.config.captchaAuto = document.getElementById('setting-captcha-auto').checked;
+            GlobalSettings.config.captchaApi = document.getElementById('setting-captcha-api').value.trim();
+            GlobalSettings.save();
+            panel.style.display = 'none';
+            // 更新验证码助手配置
+            if (typeof CaptchaHelper !== 'undefined') {
+                CaptchaHelper.config.auto = GlobalSettings.config.captchaAuto;
+                CaptchaHelper.config.api = GlobalSettings.config.captchaApi;
+                CaptchaHelper.createRetryBtn();
+            }
+        };
+    }
+
+    // ======= 验证码自动识别与设置 =======
 const CaptchaHelper = {
     config: {
-        auto: true,
-        api: 'http://127.0.0.1:5000/ocr'
+        auto: GlobalSettings.config.captchaAuto,
+        api: GlobalSettings.config.captchaApi
     },
     getInput() {
         return document.querySelector('#captchaResponse');
@@ -897,33 +1014,6 @@ const CaptchaHelper = {
             if (btn) btn.style.display = 'none';
         }
     },
-    injectToSpeedMenu() {
-        const menu = document.getElementById('lms-speed-menu');
-        if (!menu || document.getElementById('captcha-settings-area')) return;
-        const area = document.createElement('div');
-        area.id = 'captcha-settings-area';
-        area.style.cssText = 'border-top:1px solid #eee;margin-top:8px;padding-top:8px;';
-        area.innerHTML = `
-            <div style='font-weight:bold;margin-bottom:8px;'>验证码设置</div>
-            <label style='display:block;margin-bottom:8px;'><input type='checkbox' id='captcha-auto' ${this.config.auto ? 'checked' : ''}/> 自动识别</label>
-            <div id='captcha-api-row' style='margin-bottom:8px;'>API地址: <input id='captcha-api' type='text' value='${this.config.api}' style='width:180px;font-size:13px;'/></div>
-        `;
-        menu.appendChild(area);
-        // 事件绑定
-        area.querySelector('#captcha-auto').onchange = e => {
-            this.config.auto = e.target.checked;
-            this.updateMenuDisplay();
-            this.createRetryBtn();
-        };
-        area.querySelector('#captcha-api').onchange = e => {
-            this.config.api = e.target.value.trim();
-        };
-        this.updateMenuDisplay();
-    },
-    updateMenuDisplay() {
-        const apiRow = document.getElementById('captcha-api-row');
-        if (apiRow) apiRow.style.display = this.config.auto ? '' : 'none';
-    },
     init() {
         // 页面验证码出现时自动识别和按钮
         const observer = new MutationObserver(() => {
@@ -939,13 +1029,104 @@ const CaptchaHelper = {
         setTimeout(() => {
             this.autoFill();
             this.createRetryBtn();
-            this.injectToSpeedMenu();
         }, 1000);
     }
 };
 
 if (location.hostname.includes('authserver.nju.edu.cn')) {
     CaptchaHelper.init();
+}
+
+// ======= 课件批量下载(API获取)=======
+if (location.hostname === 'lms.nju.edu.cn' && location.pathname.includes('/course/')) {
+    const btn = document.createElement('button');
+    btn.textContent = '📥 下载全部课件';
+    btn.style.cssText = 'position:fixed;bottom:80px;right:20px;z-index:9999;padding:12px 20px;background:#28BD6E;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:14px;box-shadow:0 2px 8px rgba(0,0,0,0.2)';
+    btn.onclick = async () => {
+        // 从URL提取课程ID
+        const courseIdMatch = location.pathname.match(/\/course\/(\d+)/);
+        if (!courseIdMatch) return alert('无法识别课程ID');
+        const courseId = courseIdMatch[1];
+        
+        // 获取sub_course_id(从URL hash或默认为0)
+        const hashMatch = location.hash.match(/sub_course_id=(\d+)/);
+        const subCourseId = hashMatch ? hashMatch[1] : '0';
+        
+        btn.textContent = '⏳ 正在获取课件列表...';
+        btn.disabled = true;
+        
+        try {
+            // 调用API获取所有活动
+            const response = await fetch(`/api/courses/${courseId}/activities?sub_course_id=${subCourseId}`, {
+                credentials: 'same-origin',
+                headers: {
+                    'X-Requested-With': 'XMLHttpRequest'
+                }
+            });
+            
+            if (!response.ok) throw new Error('API请求失败');
+            const data = await response.json();
+            
+            // 提取所有课件(type=material)中的uploads
+            const allFiles = [];
+            if (data.activities) {
+                data.activities.forEach(activity => {
+                    if (activity.type === 'material' && activity.uploads) {
+                        activity.uploads.forEach(upload => {
+                            if (upload.reference_id && upload.name) {
+                                allFiles.push({
+                                    name: upload.name,
+                                    reference_id: upload.reference_id,
+                                    url: `/api/uploads/reference/${upload.reference_id}/blob`,
+                                    activity_title: activity.title,
+                                    type: upload.type,
+                                    allow_download: upload.allow_download || false
+                                });
+                            }
+                        });
+                    }
+                });
+            }
+            
+            btn.textContent = '📥 下载全部课件';
+            btn.disabled = false;
+            
+            if (!allFiles.length) return alert('未找到课件');
+            
+            // 筛选可下载文件
+            const downloadableFiles = allFiles.filter(f => f.allow_download);
+            
+            // 显示前10个文件名(标注是否可下载)
+            const preview = allFiles.slice(0, 10).map((f, i) => 
+                `${i + 1}. [${f.activity_title}] ${f.name}${f.allow_download ? ' (可下载)' : ''}`
+            ).join('\n');
+            const message = `找到 ${allFiles.length} 个文件，其中可下载 ${downloadableFiles.length} 个\n\n前10个文件:\n${preview}${allFiles.length > 10 ? '\n...' : ''}\n\n确认下载 ${downloadableFiles.length} 个可下载文件?`;
+            
+            if (!confirm(message)) return;
+            
+            if (!downloadableFiles.length) return alert('没有可下载的文件');
+            
+            // 依次下载可下载文件
+            downloadableFiles.forEach((file, i) => {
+                setTimeout(() => {
+                    const a = document.createElement('a');
+                    a.href = file.url;
+                    a.download = file.name;
+                    a.target = '_blank';
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                }, i * 800);
+            });
+            
+        } catch (error) {
+            btn.textContent = '📥 下载全部课件';
+            btn.disabled = false;
+            alert('获取课件列表失败: ' + error.message);
+            console.error('下载失败:', error);
+        }
+    };
+    setTimeout(() => document.body.appendChild(btn), 2000);
 }
 
 })();
