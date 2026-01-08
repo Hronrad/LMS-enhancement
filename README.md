@@ -23,10 +23,10 @@
 ## 使用演示
 刷课相关功能请按下图从右侧菜单选择所需倍速，**并在设置中勾选开启视频辅助功能**
 
-<img src="./image/demo.gif" alt="演示动图" width="600">
+<img src="./image/demo.gif" alt="演示动图" width="800">
 
 课件下载功能
-<img src="./image/uploads.png" alt="下载功能展示" width="350">
+<img src="./image/uploads.png" alt="下载功能展示" width="500">
 
 ## 一键安装教程
 
