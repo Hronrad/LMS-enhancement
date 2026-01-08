@@ -25,7 +25,7 @@
 <img src="image/demo.gif" alt="演示动图">
 
 课件下载功能
-<img src="image/uploads.png" alt="下载功能展示" width="350">
+<img src="image/uploads.png" alt="下载功能展示" width="200">
 
 ## 一键安装教程
 
