@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         南大LMS智慧教育平台|MOOC增强
 // @namespace    http://tampermonkey.net/
-// @version      0.40
+// @version      0.41
 // @description  南大LMS平台与MOOC平台加速进度/自动下一个/智能停止/无视频自动跳转/视频倍速控制/解除播放限制 + 验证码自动识别 + 一键下载所有课件
 // @author       Hronrad
 // @license    GPL-3.0-only
@@ -964,15 +964,36 @@ const CaptchaHelper = {
         auto: GlobalSettings.config.captchaAuto,
         api: GlobalSettings.config.captchaApi
     },
+    findBestElement(selector) {
+        const nodes = Array.from(document.querySelectorAll(selector));
+        if (!nodes.length) return null;
+
+        const isVisible = (el) => {
+            if (!el) return false;
+            const style = window.getComputedStyle(el);
+            return style.display !== 'none' &&
+                   style.visibility !== 'hidden' &&
+                   el.getClientRects().length > 0;
+        };
+
+        const visible = nodes.find(isVisible);
+        if (visible) return visible;
+
+        const nonTemplate = nodes.find(el => !el.closest('#hidenCaptchaDiv'));
+        if (nonTemplate) return nonTemplate;
+
+        return nodes[nodes.length - 1];
+    },
     getInput() {
-        return document.querySelector('#captchaResponse');
+        return this.findBestElement('#cpatchaDiv #captchaResponse, #captchaResponse, #dynamicCodeCaptchaResponse');
     },
     getImg() {
-        return document.querySelector('#captchaImg');
+        return this.findBestElement('#cpatchaDiv #captchaImg, #captchaImg, #dynamicCodeCaptchaImg');
     },
     getRow() {
         const input = this.getInput();
-        return input ? input.parentNode : null;
+        if (!input) return null;
+        return input.closest('#cpatchaDiv') || input.parentNode;
     },
     async recognize() {
         const img = this.getImg();
@@ -1001,7 +1022,11 @@ const CaptchaHelper = {
         if (!input) return;
         if (!force && input.value) return;
         const text = await this.recognize();
-        if (text) input.value = text;
+        if (text) {
+            input.value = text;
+            input.dispatchEvent(new Event('input', { bubbles: true }));
+            input.dispatchEvent(new Event('change', { bubbles: true }));
+        }
     },
     createRetryBtn() {
         const btnId = 'captcha-retry-btn';
