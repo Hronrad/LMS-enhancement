@@ -964,6 +964,9 @@ const CaptchaHelper = {
         auto: GlobalSettings.config.captchaAuto,
         api: GlobalSettings.config.captchaApi
     },
+    debug(...args) {
+        console.log('[NJU-enhance captcha]', ...args);
+    },
     findBestElement(selector) {
         const nodes = Array.from(document.querySelectorAll(selector));
         if (!nodes.length) return null;
@@ -985,10 +988,24 @@ const CaptchaHelper = {
         return nodes[nodes.length - 1];
     },
     getInput() {
-        return this.findBestElement('#cpatchaDiv #captchaResponse, #captchaResponse, #dynamicCodeCaptchaResponse');
+        return this.findBestElement([
+            '#cpatchaDiv #captchaResponse',
+            '#captchaResponse',
+            '#dynamicCodeCaptchaResponse',
+            'input[name="captchaResponse"]',
+            'input[id*="captcha"][type="text"]',
+            'input[placeholder*="验证码"]'
+        ].join(', '));
     },
     getImg() {
-        return this.findBestElement('#cpatchaDiv #captchaImg, #captchaImg, #dynamicCodeCaptchaImg');
+        return this.findBestElement([
+            '#cpatchaDiv #captchaImg',
+            '#captchaImg',
+            '#dynamicCodeCaptchaImg',
+            'img[id*="captcha"]',
+            'img[alt*="验证码"]',
+            'img[src*="captcha"]'
+        ].join(', '));
     },
     getRow() {
         const input = this.getInput();
@@ -997,7 +1014,10 @@ const CaptchaHelper = {
     },
     async recognize() {
         const img = this.getImg();
-        if (!img) return '';
+        if (!img) {
+            this.debug('未找到验证码图片节点');
+            return '';
+        }
         const canvas = document.createElement('canvas');
         canvas.width = img.naturalWidth || img.width;
         canvas.height = img.naturalHeight || img.height;
@@ -1013,7 +1033,9 @@ const CaptchaHelper = {
                 const data = await resp.json();
                 return (data.text || '').slice(0, 4);
             }
+            this.debug('OCR 接口返回非 2xx', resp.status);
         } catch (e) {}
+        this.debug('OCR 请求失败，可能是浏览器拦截/CORS/混合内容', this.config.api);
         return '';
     },
     async autoFill(force = false) {
@@ -1045,7 +1067,12 @@ const CaptchaHelper = {
                     if (input) input.value = '';
                     this.autoFill(true);
                 };
-                row.appendChild(btn);
+                const img = this.getImg();
+                if (img && img.parentNode) {
+                    img.insertAdjacentElement('afterend', btn);
+                } else {
+                    row.appendChild(btn);
+                }
             }
             btn.style.display = '';
         } else {
@@ -1058,11 +1085,23 @@ const CaptchaHelper = {
             if (img && img.src && !img.dataset.captchaProcessed) {
                 img.dataset.captchaProcessed = 'true';
                 img.addEventListener('load', () => setTimeout(() => this.autoFill(), 300));
+                img.addEventListener('click', () => setTimeout(() => this.autoFill(true), 500));
                 if (img.complete) setTimeout(() => this.autoFill(), 300);
             }
             this.createRetryBtn();
         });
-        observer.observe(document.body, { childList: true, subtree: true });
+        observer.observe(document.body, {
+            childList: true,
+            subtree: true,
+            attributes: true,
+            attributeFilter: ['src', 'style', 'class']
+        });
+
+        setInterval(() => {
+            this.createRetryBtn();
+            this.autoFill();
+        }, 1500);
+
         setTimeout(() => {
             this.autoFill();
             this.createRetryBtn();
