@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         南大LMS智慧教育平台|MOOC增强
 // @namespace    http://tampermonkey.net/
-// @version      0.50
+// @version      0.51
 // @description  南大LMS原生播放按钮自动播放、后台播放保护、自动下一节、统一认证自动填表 + MOOC倍速控制 + 一键下载课件
 // @author       Hronrad
 // @license    GPL-3.0-only
@@ -81,6 +81,9 @@
         }
     };
     GlobalSettings.load();
+    if (!isICourse163 && !isAuthServer) {
+        GlobalSettings.config.autoJump = true;
+    }
 
     const authAutomationState = {
         submitTimer: null,
