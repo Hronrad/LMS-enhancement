@@ -18,8 +18,6 @@
     'use strict';
 
     let lastUserAction = 0;
-    let processedRequests = new Set();
-    let isVirtualRequest = false;
     let allVideosCompleted = false;
     let scriptPaused = false;
     let noVideoCheckCount = 0;
@@ -1302,75 +1300,6 @@
 
     loadSavedSpeed();
     syncSpeedAcrossTabs();
-
-    const originalOpen = XMLHttpRequest.prototype.open;
-    XMLHttpRequest.prototype.open = function(method, url, ...args) {
-        this._method = method;
-        this._url = url;
-        this._isVirtual = isVirtualRequest;
-        return originalOpen.call(this, method, url, ...args);
-    };
-
-    const originalSend = XMLHttpRequest.prototype.send;
-    XMLHttpRequest.prototype.send = function(data) {
-        const url = this._url || '';
-        if (scriptPaused) return originalSend.call(this, data);
-
-        if (!this._isVirtual &&
-            (url.includes('/statistics/api/online-videos') ||
-             url.includes('/api/course/activities-read/')) &&
-            this._method === 'POST' && data) {
-            try {
-                const jsonData = JSON.parse(data);
-                const requestKey = `${url}-${JSON.stringify(jsonData)}`;
-                if (!processedRequests.has(requestKey)) {
-                    processedRequests.add(requestKey);
-                    createVirtualSessions(url, jsonData);
-                    setTimeout(() => processedRequests.delete(requestKey), 10000);
-                }
-            } catch (e) {}
-        }
-        return originalSend.call(this, data);
-    };
-
-    function createVirtualSessions(url, originalData) {
-        if (scriptPaused) return;
-        const sessionCount = 10;
-        const maxDuration = 30;
-        const originalDuration = (originalData.end || 0) - (originalData.start || 0);
-        const isLargeDuration = originalDuration > maxDuration;
-
-        for (let i = 1; i < sessionCount; i++) {
-            setTimeout(() => {
-                if (scriptPaused) return;
-                const virtualData = JSON.parse(JSON.stringify(originalData));
-                if (isLargeDuration) {
-                    const segmentDuration = Math.min(maxDuration, Math.floor(originalDuration / sessionCount) + 5);
-                    const baseStart = originalData.start || 0;
-                    virtualData.start = baseStart + (i - 1) * segmentDuration + Math.floor(Math.random() * 3);
-                    virtualData.end = virtualData.start + segmentDuration + Math.floor(Math.random() * 3);
-                    if (virtualData.end > originalData.end) virtualData.end = originalData.end;
-                    if (virtualData.start >= virtualData.end) {
-                        virtualData.start = virtualData.end - Math.min(5, segmentDuration);
-                    }
-                } else {
-                    if (virtualData.start !== undefined) virtualData.start += Math.floor(Math.random() * 3);
-                    if (virtualData.end !== undefined) virtualData.end += Math.floor(Math.random() * 3);
-                }
-                const duration = (virtualData.end || 0) - (virtualData.start || 0);
-                if (duration <= 0 || duration > maxDuration * 2) return;
-                fetch(url, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'X-Requested-With': 'XMLHttpRequest'
-                    },
-                    body: JSON.stringify(virtualData),
-                    credentials: 'same-origin'
-                }).catch(() => {});
-            }, i * 400 + Math.random() * 300);
-        }
-    }
 
     function detectUserAction(e) {
         const target = e.target;
