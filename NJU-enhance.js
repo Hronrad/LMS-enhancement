@@ -43,6 +43,27 @@
     let lastBackgroundRecoveryAttempt = 0;
     const BACKGROUND_RETRY_COOLDOWN = 3000;
 
+    // The LMS decides completion server-side and exposes it as an activity_read
+    // state: none / part / full. The script only reads that state; it never tries
+    // to write progress itself. The read is tiny (~300 B) and answered in roughly
+    // 100-500 ms, but it runs for every user of this script, so the interval stays
+    // conservative; repeated failures back off from it, doubling to a hard cap.
+    const COMPLETION_POLL_MS = 5000;
+    const COMPLETION_MAX_BACKOFF_MS = 60000;
+    const COMPLETION_REQUEST_TIMEOUT_MS = 8000;
+    // Most courses require at least 50% accumulated viewing before an activity
+    // counts as complete, so there is no point asking earlier: waiting keeps the
+    // request count down and stops an already-finished activity from bouncing
+    // away the moment it is opened.
+    const COMPLETION_CHECK_FLOOR_RATIO = 0.5;
+    // Only the natural end-of-video path waits, and it waits for the LMS to
+    // actually record the activity instead of for a guessed fixed delay: the
+    // player's final progress chunk is still in flight when `ended` fires, and
+    // leaving immediately tears the player down before it can submit. The LMS
+    // folds that progress into activity_reads on a slow cadence (observed to be
+    // roughly every two minutes), so the wait spans a full cycle.
+    const FINAL_PROGRESS_TIMEOUT_MS = 121000;
+
     const SPEED_STORAGE_KEY = `lms-video-speed-${location.hostname}`;
     const SETTINGS_STORAGE_KEY = 'lms-enhance-settings';
 
@@ -72,7 +93,8 @@
             username: '',
             password: '',
             authSubmitDelayMs: 800,
-            autoJump: true
+            autoJump: true,
+            jumpAfterCompletion: true
         },
         load() {
             try {
@@ -1513,12 +1535,120 @@
         return new Promise(resolve => setTimeout(resolve, ms));
     }
 
-    async function waitForProgressFlush() {
-        // The LMS owns the actual heartbeat and completion request. Do not
-        // intercept it; simply leave the activity in place long enough for
-        // the player's final event to be submitted before changing chapters.
-        await sleep(5000);
-        return true;
+    function getCurrentActivityId() {
+        return location.hash.match(/^#\/(\d+)/)?.[1] || null;
+    }
+
+    function getCurrentCourseId() {
+        return location.pathname.match(/\/course\/(\d+)/)?.[1] || null;
+    }
+
+    // The activity_read record carries two different things under the same name:
+    //   completeness (top level) -> "none" | "part" | "full"  (the LMS's own state)
+    //   data.completeness        -> a percentage such as 18
+    // The course page renders the state (its bar is a fixed-width three-state CSS
+    // widget, not a percentage), and the server flips it to "full" once the course
+    // criterion is met, so the state is the authoritative signal here.
+    function normalizeActivityReadState(value) {
+        const state = String(value ?? '').toLowerCase();
+        if (state === 'full' || state === 'complete' || state === 'completed') return 'full';
+        if (state === 'part' || state === 'partial') return 'part';
+        if (state === 'none') return 'none';
+        return null;
+    }
+
+    // Read-only snapshot of the current activity's server-side completion state.
+    // Uses the same GET the course page itself uses, so polling never writes
+    // anything to the server (unlike POST /api/course/activities-read/{id}).
+    async function readActivityReadState(courseId, activityId) {
+        // A held-open request would leave the caller's in-flight flag stuck and
+        // silently stop the whole check loop, so every read is time-boxed.
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), COMPLETION_REQUEST_TIMEOUT_MS);
+        try {
+            const response = await fetch(`/api/course/${courseId}/activity-reads-for-user`, {
+                credentials: 'same-origin',
+                signal: controller.signal,
+                headers: {
+                    'X-Requested-With': 'XMLHttpRequest'
+                }
+            });
+            if (!response.ok) throw new Error(`Read state request failed: ${response.status}`);
+
+            const result = await response.json();
+            const reads = Array.isArray(result?.activity_reads) ? result.activity_reads : [];
+            const entry = reads.find(read =>
+                String(read.activity_id) === String(activityId) &&
+                (!read.activity_type || read.activity_type === 'learning_activity'));
+
+            // No record at all means the activity has never been marked as read.
+            if (!entry) return { state: 'none', completeness: NaN };
+
+            return {
+                state: normalizeActivityReadState(entry.completeness),
+                completeness: Number(entry.data?.completeness)
+            };
+        } catch (error) {
+            console.warn('[LMS enhance] Failed to read activity completion state:', error);
+            return null;
+        } finally {
+            clearTimeout(timeoutId);
+        }
+    }
+
+    // Wait for the LMS to report the activity as recorded complete.
+    // Returns true as soon as it does, false if the wait ran out of time.
+    async function waitForRecordedCompletion(courseId, activityId) {
+        const deadline = Date.now() + FINAL_PROGRESS_TIMEOUT_MS;
+        while (Date.now() < deadline) {
+            await sleep(COMPLETION_POLL_MS);
+            // The page may navigate away on its own while we wait.
+            if (activityId !== getCurrentActivityId()) return false;
+
+            const progress = await readActivityReadState(courseId, activityId);
+            if (progress?.state === 'full') return true;
+        }
+        return false;
+    }
+
+    // Shared navigation for both completion paths.
+    //   completionRecorded = true  -> the LMS already reported this activity as
+    //     complete, so there is nothing left to submit: switch immediately.
+    //   completionRecorded = false -> the video just ended and the player's last
+    //     progress chunk is still in flight, so wait for the LMS to record the
+    //     activity before leaving it behind.
+    async function advanceToNextVideo(completionRecorded = false) {
+        if (scriptPaused || nextInProgress) return;
+
+        backgroundPlaybackExpected = false;
+        nextInProgress = true;
+
+        const activityId = getCurrentActivityId();
+        const courseId = getCurrentCourseId();
+
+        if (!completionRecorded && activityId && courseId) {
+            const recorded = await waitForRecordedCompletion(courseId, activityId);
+
+            if (activityId !== getCurrentActivityId()) {
+                // Something else already moved the page on; do not navigate again.
+                nextInProgress = false;
+                return;
+            }
+            if (!recorded) {
+                console.warn(
+                    '[LMS enhance] The LMS has not recorded this activity as complete yet; ' +
+                    'switching anyway. Reopen this section if the course still shows it as incomplete.');
+            }
+        }
+
+        if (GlobalSettings.config.autoJump) {
+            if (hasNextButton()) autoClickNext();
+            else pauseScript();
+        }
+
+        setTimeout(() => {
+            nextInProgress = false;
+        }, 3000);
     }
 
     function setupVideoCompletionHandler() {
@@ -1535,7 +1665,13 @@
                 started: !video.paused,
                 seekingFrom: null,
                 invalidSeek: false,
-                seekGapEnd: null
+                seekGapEnd: null,
+                autoJumpTriggered: false,
+                completionCheckInFlight: false,
+                completionCheckNextAt: 0,
+                completionCheckFailures: 0,
+                completionConfirmed: false,
+                completionState: null
             });
             video.addEventListener('play', () => {
                 const state = videoWatchStates.get(video);
@@ -1583,6 +1719,59 @@
                         state.invalidSeek = false;
                         state.seekGapEnd = null;
                     }
+
+                    // Continuous playback only: a seek must never trigger the switch.
+                    const earlySwitchEnabled = GlobalSettings.config.autoJump &&
+                        GlobalSettings.config.jumpAfterCompletion;
+                    const playbackStarted = Number.isFinite(video.duration) &&
+                        video.duration > 0 &&
+                        state.maxContinuousTime / video.duration >= COMPLETION_CHECK_FLOOR_RATIO;
+
+                    if (earlySwitchEnabled &&
+                        !state.invalidSeek &&
+                        !state.autoJumpTriggered &&
+                        !video.ended &&
+                        state.completionConfirmed) {
+                        // The LMS has already recorded this activity as complete,
+                        // so there is nothing left to submit: switch at once.
+                        state.autoJumpTriggered = true;
+                        advanceToNextVideo(true);
+                    } else if (earlySwitchEnabled &&
+                        !state.invalidSeek &&
+                        !state.autoJumpTriggered &&
+                        !state.completionConfirmed &&
+                        playbackStarted &&
+                        !state.completionCheckInFlight &&
+                        Date.now() >= state.completionCheckNextAt) {
+                        const activityId = getCurrentActivityId();
+                        const courseId = getCurrentCourseId();
+                        if (activityId && courseId) {
+                            state.completionCheckInFlight = true;
+                            readActivityReadState(courseId, activityId).then(progress => {
+                                state.completionCheckInFlight = false;
+                                if (activityId !== getCurrentActivityId() || video.ended) return;
+
+                                if (!progress) {
+                                    // Transient failure: slow down, but never give up
+                                    // permanently on a single bad request.
+                                    state.completionCheckFailures += 1;
+                                    const backoff = Math.min(
+                                        COMPLETION_MAX_BACKOFF_MS,
+                                        COMPLETION_POLL_MS * Math.pow(2, state.completionCheckFailures - 1));
+                                    state.completionCheckNextAt = Date.now() + backoff;
+                                    return;
+                                }
+
+                                state.completionCheckFailures = 0;
+                                state.completionCheckNextAt = Date.now() + COMPLETION_POLL_MS;
+                                if (state.completionState !== progress.state) {
+                                    state.completionState = progress.state;
+                                    console.log(`[LMS enhance] Activity ${activityId} is recorded as "${progress.state}"`);
+                                }
+                                state.completionConfirmed = progress.state === 'full';
+                            });
+                        }
+                    }
                 }
                 state.lastTime = current;
             });
@@ -1612,21 +1801,7 @@
             });
             video.addEventListener('ended', async function() {
                 if (scriptPaused || nextInProgress || !checkAllVideosCompleted()) return;
-
-                backgroundPlaybackExpected = false;
-                nextInProgress = true;
-                const flushed = await waitForProgressFlush();
-
-                if (flushed && GlobalSettings.config.autoJump) {
-                    if (hasNextButton()) autoClickNext();
-                    else pauseScript();
-                } else if (!flushed) {
-                    console.warn('[LMS enhance] Progress request did not finish successfully; automatic navigation was cancelled.');
-                }
-
-                setTimeout(() => {
-                    nextInProgress = false;
-                }, 3000);
+                await advanceToNextVideo();
             });
         });
     }
@@ -1762,6 +1937,12 @@
                         <div style="font-size: 12px; color: #666; margin-top: 2px;">点击播放器原生播放键，并在播放完成后进入下一节</div>
                     </div>
                 </label>
+                <label style="display: flex; align-items: flex-start; margin-bottom: 12px; margin-left: 24px;">
+                    <input type="checkbox" id="setting-jump-after-completion" ${GlobalSettings.config.jumpAfterCompletion ? 'checked' : ''} style="margin: 3px 8px 0 0;">
+                    <div>
+                        <span style="font-weight: 500;">课程被记为已完成后自动切换下一节</span>
+                    </div>
+                </label>
             </div>
             <div style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px;">
                 <button id="cancel-settings" style="padding: 8px 16px; border: 1px solid #ddd; background: white; border-radius: 4px; cursor: pointer;">取消</button>
@@ -1784,6 +1965,7 @@
             GlobalSettings.config.password = document.getElementById('setting-auth-password').value;
             GlobalSettings.config.authSubmitDelayMs = Math.max(0, Number(document.getElementById('setting-auth-delay').value) || 0);
             GlobalSettings.config.autoJump = document.getElementById('setting-auto-jump').checked;
+            GlobalSettings.config.jumpAfterCompletion = document.getElementById('setting-jump-after-completion').checked;
             GlobalSettings.save();
             panel.style.display = 'none';
         };
